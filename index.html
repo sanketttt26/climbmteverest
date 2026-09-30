@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Everest: Summit Expedition</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;800&family=Manrope:wght@400;600;700&display=swap">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#05080f}canvas{display:block}
+/* Loading screen, shown before any module runs and driven by window.__boot (below). Everything that moves is a CSS
+   transform/opacity so it keeps animating while the terrain build blocks the main thread. */
+#boot{position:fixed;inset:0;z-index:1000;background:#05080f;color:#f2f5fa;font-family:Manrope,system-ui,sans-serif;transition:opacity .9s;cursor:progress;user-select:none;overflow:hidden}
+#boot.out{opacity:0;pointer-events:none}
+#boot figure{position:absolute;inset:0;margin:0;opacity:0;animation:bootFade 30s linear infinite;animation-delay:calc(var(--i) * 6s)}
+#boot figure img{position:absolute;inset:-2%;width:104%;height:104%;object-fit:cover;animation:bootKB 30s linear infinite;animation-delay:calc(var(--i) * 6s)}
+#boot figure::after{content:'';position:absolute;inset:0;background:linear-gradient(0deg,rgba(4,7,14,.92),rgba(4,7,14,.4) 25%,rgba(4,7,14,0) 50%),radial-gradient(ellipse at 50% 45%,transparent 55%,rgba(0,0,0,.55))}
+#boot figcaption{position:absolute;right:clamp(20px,4vw,64px);top:clamp(20px,4.5vh,54px);z-index:1;font:700 12px/1 Manrope,sans-serif;letter-spacing:.38em;text-transform:uppercase;text-shadow:0 1px 3px rgba(0,0,0,.6)}
+@keyframes bootFade{0%{opacity:0}4%{opacity:1}20%{opacity:1}24%{opacity:0}100%{opacity:0}}
+@keyframes bootKB{0%{transform:scale(1.1)}24%{transform:scale(1)}100%{transform:scale(1)}}
+#boot .ui{position:absolute;left:clamp(20px,4vw,64px);right:clamp(20px,4vw,64px);bottom:clamp(26px,6vh,64px)}
+#boot .brand{display:flex;align-items:flex-end;gap:16px;margin-bottom:26px}
+#boot .brand b{font:800 clamp(48px,8vw,104px)/.82 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.04em}
+#boot .brand b i{font-style:normal;color:#ff6a2b}
+#boot .brand span{font:700 11px/1.5 Manrope,sans-serif;letter-spacing:.38em;text-transform:uppercase;color:rgba(242,245,250,.6);border-left:1px solid rgba(242,245,250,.3);padding-left:14px;padding-bottom:.35em}
+#boot .row{display:flex;justify-content:space-between;font:600 12px/1 Manrope,sans-serif;letter-spacing:.3em;text-transform:uppercase;color:rgba(242,245,250,.82);margin-bottom:12px}
+#boot .bar{position:relative;height:2px;background:rgba(242,245,250,.14);overflow:hidden}
+#boot .bar i{position:absolute;inset:0;transform-origin:0 50%;transform:scaleX(0);background:linear-gradient(90deg,#b8400f,#ff6a2b 70%,#ffb07a)}
+#boot .msg{display:none;margin-top:12px;font-size:13px;color:#ffb3b3}
+#boot.err .msg{display:block}
+@media (prefers-reduced-motion:reduce){#boot figure,#boot figure img{animation:none}#boot figure:first-child{opacity:1}}
+</style>
+</head>
+<body>
+<div id="boot" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+  <!-- in-game stills captured with ?shot=<name>&hud=0 -->
+  <figure style="--i:0"><img src="/loading/01.jpg" alt=""><figcaption>Khumbu Icefall · Morning</figcaption></figure>
+  <figure style="--i:1"><img src="/loading/02.jpg" alt=""><figcaption>Lhotse Face · Afternoon</figcaption></figure>
+  <figure style="--i:2"><img src="/loading/03.jpg" alt=""><figcaption>Summit Ridge · Sunrise</figcaption></figure>
+  <figure style="--i:3"><img src="/loading/04.jpg" alt=""><figcaption>Western Cwm · Blizzard</figcaption></figure>
+  <figure style="--i:4"><img src="/loading/05.jpg" alt=""><figcaption>Base Camp · Day</figcaption></figure>
+  <div class="ui">
+    <div class="brand"><b>EVEREST<i>.</i></b><span>South Col Route</span></div>
+    <div class="row"><span class="lbl">Starting</span><span class="pct">0%</span></div>
+    <div class="bar"><i></i></div>
+    <div class="msg" role="alert"></div>
+  </div>
+</div>
+<script>
+// window.__boot, used by src/main.js: stage(name) -> Promise that resolves once the label has painted; done() fades out.
+// ?shot= skips the screen so captures are clean.
+(() => {
+  const el = document.getElementById('boot');
+  if (new URLSearchParams(location.search).has('shot')) { el.remove(); window.__boot = { stage: () => Promise.resolve(), done() {} }; return; }
+  const LABELS = { boot: 'Starting', terrain: 'Raising the Himalaya', world: 'Pitching the camps', player: 'Gearing up', shaders: 'Compiling shaders', frame: 'Heading to Base Camp' };
+  const ORDER = Object.keys(LABELS), bar = el.querySelector('.bar i'), lbl = el.querySelector('.lbl'), pct = el.querySelector('.pct');
+  const paint = () => new Promise(r => { let ok = false; const go = () => { if (!ok) { ok = true; r(); } }; requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(go))); setTimeout(go, 250); });
+  let finished = false;
+  function set(f) { bar.style.transition = 'transform .5s ease-out'; bar.style.transform = `scaleX(${f})`; pct.textContent = Math.round(f * 100) + '%'; el.setAttribute('aria-valuenow', Math.round(f * 100)); }
+  function stage(name) { lbl.textContent = LABELS[name] || name; set(ORDER.indexOf(name) / ORDER.length); return paint(); }
+  function done() { if (finished) return; finished = true; set(1); setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 1000); }, 300); }
+  // a failed start never leaves the screen loading forever
+  const fail = m => { if (finished) return; el.classList.add('err'); lbl.textContent = 'Could not start'; el.querySelector('.msg').textContent = String(m || 'Unknown error').slice(0, 240) + ' (details in the browser console)'; };
+  addEventListener('error', e => fail(e.error?.message || e.message || 'A script failed to load'), true);
+  addEventListener('unhandledrejection', e => fail(e.reason?.message || e.reason));
+  window.__boot = { stage, done };
+  stage('boot');
+})();
+</script>
+
+<div id="hud" hidden>
+  <div id="compass"><canvas></canvas></div>
+  <div id="objective"><b id="obj-text"></b><span id="obj-dist"></span></div>
+  <div id="info" class="panel">
+    <div id="loc"></div>
+    <div id="alt"></div>
+    <div class="row"><span id="time"></span><span id="weather"></span></div>
+    <div class="row"><span id="temp"></span><span id="wind"></span></div>
+    <div id="vis" class="dim"></div>
+  </div>
+  <div id="vitals" class="panel"></div>
+  <div id="right">
+    <div id="kit" class="panel"><div id="o2"></div><div id="supplies"></div><div id="gear"></div></div>
+    <div id="minimap"><canvas></canvas></div>
+  </div>
+  <div id="route"><div id="route-me"></div></div>
+  <div id="prompt" hidden></div>
+  <div id="toasts"></div>
+  <div id="help" class="panel" hidden></div>
+</div>
+<div id="fx-hypoxia" class="fx"></div>
+<div id="fx-cold" class="fx"></div>
+<div id="fx-damage" class="fx"></div>
+<div id="fade" class="fx"></div>
+
+<section id="menu" class="screen" hidden>
+  <div class="card">
+    <p class="eyebrow">South Col route · 5,364 m → 8,849 m</p>
+    <h1>EVEREST<i>.</i></h1>
+    <p class="sub">Climb from Base Camp through the Khumbu Icefall, the Western Cwm and the Lhotse Face to the top of the world.</p>
+    <div class="buttons">
+      <button id="btn-continue" hidden>Continue from last camp</button>
+      <button id="btn-new">Begin new expedition</button>
+      <button class="ghost" data-open="settings">Settings</button>
+    </div>
+    <dl id="controls" class="controls">
+      <dt>WASD / mouse</dt><dd>Move and look (left stick / right stick)</dd>
+      <dt>Shift · Space</dt><dd>Sprint · jump (RT · A)</dd>
+      <dt>E</dt><dd>Rest, resupply, take gear, clip into ropes (X)</dd>
+      <dt>Q (hold)</dt><dd>Ice-axe self-arrest (LT)</dd>
+      <dt>O</dt><dd>Oxygen on/off (Y)</dd>
+      <dt>1 · 2</dt><dd>Eat · drink (LB · RB)</dd>
+      <dt>C</dt><dd>Sit and catch your breath (B)</dd>
+      <dt>L · V</dt><dd>Headlamp · first/third person (D-pad up · View)</dd>
+      <dt>H · M · Esc</dt><dd>Controls · mute · pause (Menu)</dd>
+    </dl>
+  </div>
+</section>
+<section id="pause" class="screen" hidden>
+  <div class="card">
+    <h2>Paused</h2>
+    <div class="buttons col">
+      <button id="btn-resume">Resume climbing</button>
+      <button class="ghost" data-open="settings">Settings</button>
+      <button class="ghost" id="btn-title">Quit to title</button>
+    </div>
+  </div>
+</section>
+<section id="settings" class="screen" hidden>
+  <div class="card">
+    <h2>Settings</h2>
+    <form id="settings-form" class="settings">
+      <label>Graphics quality <select name="quality"><option value="low">Low</option><option value="med">Medium</option><option value="high">High</option></select></label>
+      <label>Mouse sensitivity <input name="sensitivity" type="range" min="0.3" max="2.5" step="0.05"></label>
+      <label>Field of view <input name="fov" type="range" min="50" max="85" step="1"></label>
+      <label>Volume <input name="volume" type="range" min="0" max="1" step="0.05"></label>
+      <label class="check"><input name="invertY" type="checkbox"> Invert mouse Y</label>
+    </form>
+    <p class="dim small">Changing graphics quality reloads the page. Your expedition is saved at your last camp.</p>
+    <button id="btn-settings-back">Back</button>
+  </div>
+</section>
+<section id="dead" class="screen" hidden>
+  <div class="card">
+    <p class="eyebrow">Expedition failed</p>
+    <h2 id="dead-cause"></h2>
+    <p id="dead-stats" class="sub"></p>
+    <div class="buttons"><button id="btn-retry">Return to last camp</button><button id="btn-restart" class="ghost">Restart from Base Camp</button></div>
+  </div>
+</section>
+<section id="win" class="screen" hidden>
+  <div class="card">
+    <p class="eyebrow">8,849 m</p>
+    <h2>You stand on the summit of Mount Everest</h2>
+    <p id="win-stats" class="sub"></p>
+    <button id="btn-explore">Keep exploring</button>
+  </div>
+</section>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

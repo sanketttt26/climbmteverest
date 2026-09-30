@@ -1,0 +1,83 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Everest self-test</title>
+<pre id="out">running…</pre>
+<script type="module">
+import * as THREE from 'three';
+import { buildTerrain, heightAt, slopeAt, routeAt, pointAt, ROUTE, PATH_LEN, altToY, yToAlt } from './src/world/terrain.js';
+import { World } from './src/world/mountain.js';
+import { Survival } from './src/game/systems/survival.js';
+import { createTraversal } from './src/player/traversal.js';
+
+const out = [], check = (ok, msg) => out.push(`${ok ? 'PASS' : 'FAIL'} ${msg}`);
+const mesh = buildTerrain();
+
+for (const w of ROUTE) {
+  const h = heightAt(w.x, w.z);
+  check(Math.abs(h - altToY(w.alt)) < 2, `${w.name} terrain at ${Math.round(yToAlt(h))} m (real ${w.alt} m)`);
+}
+const top = ROUTE.at(-1);
+let highest = -Infinity;
+for (let a = 0; a < 6.28; a += 0.3) for (const r of [8, 20, 40]) highest = Math.max(highest, heightAt(top.x + Math.cos(a) * r, top.z + Math.sin(a) * r));
+check(highest < heightAt(top.x, top.z), 'nothing near the summit is higher than it');
+
+const pos = mesh.geometry.attributes.position;
+let worst = 0;
+for (let i = 0; i < pos.count; i += 997) worst = Math.max(worst, Math.abs(heightAt(pos.getX(i), pos.getZ(i)) - pos.getY(i)));
+check(worst < 1e-3, 'physics height matches the rendered mesh');
+
+for (const s of [0, 300, 900, PATH_LEN - 1]) {
+  const p = pointAt(s);
+  check(Math.abs(routeAt(p.x, p.z).s - s) < 1, `routeAt(pointAt(${Math.round(s)})) round-trips`);
+}
+
+// every metre of trail must be climbable: on foot with crampons + axe (40°), or on a fixed rope
+const world = new World(new THREE.Scene()), deg = r => Math.round(r * 180 / Math.PI);
+let free = 0, freeAt = 0, roped = 0;
+for (let s = 0; s < PATH_LEN; s++) {
+  const p = pointAt(s), a = slopeAt(p.x, p.z).angle;
+  if (world.nearestRope({ x: p.x, y: heightAt(p.x, p.z), z: p.z }).d < 2.8) roped = Math.max(roped, a);
+  else if (a > free) { free = a; freeAt = s; }
+}
+check(free < 40 * Math.PI / 180, `unroped trail is walkable with crampons and axe (steepest ${deg(free)}° at ${Math.round(yToAlt(pointAt(freeAt).y))} m)`);
+check(roped < 70 * Math.PI / 180, `roped trail is climbable on a jumar (steepest ${deg(roped)}°)`);
+check(world.crevasses.every(c => c.l1 < 72 && c.l0 > -72), 'every crevasse spans the walkable glacier (no way around the ladder)');
+
+// a bot drives the real traversal controller from Base Camp to the summit: steer along the trail, hold W,
+// clip into each fixed rope and unclip at its end
+{
+  const trav = createTraversal(world), s = trav.s, start = pointAt(5);
+  trav.teleport(start.x, start.z, 0);
+  const I = { move: { x: 0, y: 1 }, look: { dx: 0, dy: 0 } };
+  const T = { speedMul: 1, maxSlope: 40 * Math.PI / 180, canSprint: false, canJump: true, hasAxe: true, wind: new THREE.Vector3(), fp: false, camYaw: 0 };
+  let t = 0, best = 0, stall = 0, falls = 0, ladders = 0, onLadder = false, noClip = -1;
+  for (; t < 3000 && stall < 20; t += 1 / 30) {
+    const r = routeAt(s.pos.x, s.pos.z), a = pointAt(r.s + 5);
+    T.camYaw = Math.atan2(a.x - s.pos.x, a.z - s.pos.z);
+    const n = world.nearestRope(s.pos);
+    if (!s.rope && n.d < 2.8 && r.s > noClip) trav.clip(n.rope);
+    if (s.rope && world.nearestRope(s.pos, s.rope).i === s.rope.length - 1) { trav.unclip(); noClip = r.s + 15; }
+    trav.update(1 / 30, I, T);
+    if (trav.events.includes('crevasse')) { falls++; s.pos.copy(s.lastSafe); s.vel.set(0, 0, 0); }
+    if (s.surface === 'ladder' && !onLadder) ladders++;
+    onLadder = s.surface === 'ladder';
+    if (r.s > best + 1) { best = r.s; stall = 0; } else stall += 1 / 30;
+    if (r.s > PATH_LEN - 4) break;
+  }
+  check(best > PATH_LEN - 5 && falls === 0 && ladders === world.crevasses.length,
+    `bot climbs Base Camp to summit in ${Math.round(t)} game s (${falls} crevasse falls, ${ladders}/${world.crevasses.length} ladders, reached ${Math.round(best)}/${Math.round(PATH_LEN)})`);
+}
+
+const summitHour = o2 => {
+  const s = new Survival();
+  s.gear.suit = true;
+  if (o2) Object.assign(s, { tanks: 9, tankLevel: 1, o2On: true });
+  for (let t = 0; t < 120; t += 0.1) s.update(0.1, { alt: 8849, airTemp: -25, wind: 5, moving: false, uphill: 0 });
+  return s;
+};
+check(summitHour(false).health < 90, 'hypoxia hurts at the summit without oxygen');
+check(summitHour(true).health > 99, 'bottled oxygen keeps you alive at the summit');
+
+document.getElementById('out').textContent = out.join('\n');
+document.title = out.some(l => l.startsWith('FAIL')) ? 'FAIL' : 'PASS';
+</script>
